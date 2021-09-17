@@ -4,7 +4,7 @@ if ($PSVersionTable.PSVersion -lt [version]'5.1') {
 if ($PSVersionTable.PSVersion -ge [version]'5.2') {
     throw "This script requires PowerShell 5.1. The MilestonePSTools module requires Windows PowerShell 5.1 due to a dependency on .NET Framework and it is not compatible with PowerShell $($PSVersionTable.PSVersion)"
 }
-Add-Type -AssemblyName System.Management.Automation, System.Windows.Forms
+Add-Type -AssemblyName System.Management.Automation
 
 ###
 ###  Check for admin prileges and prompt user to re-run as administrator if necessary
