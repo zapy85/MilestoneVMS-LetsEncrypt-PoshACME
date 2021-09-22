@@ -188,6 +188,3 @@ The scheduled task will write a PowerShell transaction log to C:\ProgramData\Mil
 on each run, overwriting the previous log each time. Check this log file to verify that the task is
 running daily, and behaving as expected.
 "@ -ForegroundColor Green
-
-#Client ID: 02949202-fb43-4fcf-8c88-672203ccbbe7
-#Secret: JcKghcc6K7JMgUDpvQW2YKJhQ9DUJD
