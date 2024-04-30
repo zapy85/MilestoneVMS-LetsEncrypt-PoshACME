@@ -12,12 +12,25 @@ This script will prompt you to provide your desired certificate domain name, you
 (optional) for email notifications when a certificate is nearing expiration, and your Dynu client ID
 and secret.
 
-You will also be prompted to provide your Windows or AD account password which is used to register
-a scheduled task. The scheduled task will run daily, and when the current certificate is at least
-60 days old, a new certificate will be issued.
+A folder will be created at C:\ProgramData\Milestone\MilestonePSTools, and a script will be saved
+there under the name "Renew-VmsLECertificate.ps1". This script will be called by the
+"Renew-VmsLECertificate" scheduled task which will be created in Task Scheduler under the path
+"\Milestone".
+
+You will be prompted to provide your Windows or AD account password so that the scheduled task can
+run whether you are logged on or not, and the task will be registered with elevated privileges as
+it will need to be able to add/remove certificates from the local machine certificate store.
+
+The scheduled task will run daily, and when the current certificate is at least 60 days old, a new
+certificate will be issued. When the task runs, it will log to a file under
+"C:\ProgramData\Milestone\MilestonePSTools\Logs". There will be one log file per day and they
+will be removed after 7 days. You will also find messages in the Windows Event Logs under the log
+name "Milestone" and the source name "Renew-VmsLECertificate".
 
 If the scheduled task stops running for any reason, or it fails to renew the certificate, Let's
 Encrypt will send expiration notices to the provided email address if you choose to supply one.
+Make sure to check the log files or Windows Event Logs if you unexpectedly receive an expiration
+warning.
 
 .PARAMETER StagingOnly
 Specified when only staging server certificates are desired such as when performing frequent tests.
@@ -513,20 +526,21 @@ your Lets Encrypt certificate for $domain is eligible for renewal, the certifica
 applied to the Mobile Server, and the old certificate will be removed from the local machine
 certificate store.
 
-The daily renewal task will write event log entries under the log name "Milestone" with a source
-of "Renew-VmsLECertificate". If you start seeing renewal reminder emails when there are less than
-30 days remaining before the certificate expires, the event logs are the first place to look.
+The daily renewal task will write event log entries under the log name "Milestone" with the source
+"Renew-VmsLECertificate". You will also find log files under "C:\ProgramData\Milestone\MilestonePSTools\Logs\"
+which will be kept for 7 days. If you start seeing renewal reminder emails when there are less than
+30 days remaining before the certificate expires, these logs are the first place to check.
 
 Please note that your scheduled task will fail to run or log anything at all if the password for
 this user account is updated without updating the scheduled task in Task Scheduler.
 
 The 'Renew-VmsLECertificate' scheduled task executes the script at '$renewalScriptPath' daily
-at midnight, with a random additional delay of up to one hour (to avoid many customers attempting
-renewals at the exact same time).
+at midnight, with a random additional delay of up to one hour to avoid many customers attempting
+renewals at the exact same time.
 
-The Posh-ACME module will only actually allow the renewal to proceed when the current certificate is
-at least 60 days old unless overridden with "Submit-Renewal -Force", so you will see daily
-messages in the event logs about the certificate not being ready for renewal and this is normal.
+The Posh-ACME module will only allow the renewal to proceed when the current certificate is at least
+60 days old, unless overridden with "Submit-Renewal -Force". As a result, you will see daily
+messages in logs about the certificate not being ready for renewal. This is normal.
 
 You may re-run this script at any time to re-create the scheduled task with updated parameters. Take
 care not to run it too often with the same domain name however, as you will be rate limited by
