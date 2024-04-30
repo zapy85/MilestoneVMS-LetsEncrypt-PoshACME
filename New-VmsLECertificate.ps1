@@ -353,61 +353,96 @@ try {
 
 
     $renewalScript = {
-        param([string]$Domain, [string]$ServerConfiguratorPath, [string]$ServiceAccountName, [string]$PAServer)
+        param(
+            [string]$Domain,
+            [string]$ServerConfiguratorPath,
+            [string]$ServiceAccountName,
+            [string]$PAServer
+        )
         try {
+            # Setup PSFramework logger
+            # Setup PSFramework logger to log to file and Windows Event Log
+            $paramSetPSFLoggingProvider = @{
+                Name            = 'eventlog'
+                InstanceName    = 'Renew-VmsLECertificate'
+                LogName         = 'Milestone'
+                Source          = 'Renew-VmsLECertificate'
+                Enabled         = $true
+                Wait            = $true
+                ExcludeTags     = 'logfile'
+            }
+            Set-PSFLoggingProvider @paramSetPSFLoggingProvider
+            
             $logFolder = (New-Item -Path (Join-Path $PWD 'Logs') -ItemType Directory -Force).FullName
             $paramSetPSFLoggingProvider = @{
                 Name            = 'logfile'
                 InstanceName    = '<taskname>'
-                FilePath        = Join-Path $logFolder 'certificate-renewal-%Date%.csv'
+                FilePath        = Join-Path $logFolder 'renewal-log-%Date%.csv'
                 Enabled         = $true
                 EnableException = $true
                 Wait            = $true
+                ExcludeTags     = 'eventlog'
             }
             Set-PSFLoggingProvider @paramSetPSFLoggingProvider
             
-            Write-PSFMessage -Message "Attempting certificate renewal for domain '$Domain'"
-            Write-PSFMessage -Message "ServerConfiguratorPath: $ServerConfiguratorPath"
-            Write-PSFMessage -Message "ServiceAccountName: $ServiceAccountName"
-            Write-PSFMessage -Message "PAServer: $PAServer"
+            $scriptParams = [pscustomobject]@{
+                PSCommandPath          = $PSCommandPath
+                Domain                 = $Domain
+                ServerConfiguratorPath = $ServerConfiguratorPath
+                ServiceAccountName     = $ServiceAccountName
+                PAServer               = $PAServer
+            }
+            Write-PSFMessage -Message ($scriptParams | ConvertTo-Json) -Tag eventlog
             
+            $ErrorActionPreference = 'Stop'
+            'Domain', 'ServerConfiguratorPath', 'ServiceAccountName', 'PAServer' | ForEach-Object {
+                if ([string]::IsNullOrWhiteSpace((Get-Variable -Name $_).Value)) {
+                    throw "The parameter '$_' was not provided. Check the arguments for the action in the scheduled task calling this renewal script."
+                }
+            }
+        
             Set-PAServer $PAServer
-            $oldCert = Get-PACertificate -MainDomain $Domain
-            if ($null -eq $oldCert) {
-                throw "Posh-ACME did not find a certificate for domain $Domain. Please re-run the original setup script."
+            $order = Get-PAOrder -MainDomain $Domain
+            if ($null -eq $order) {
+                throw "Posh-ACME did not find an order for domain $Domain. Please re-run the original setup script."
+            }
+            $renewAfter = [datetimeoffset]$order.RenewAfter
+            if ($renewAfter -gt [datetimeoffset]::UtcNow) {
+                Write-PSFMessage -Message "The certificate for domain '$Domain' is not ready for renewal until after $($renewAfter.ToLocalTime())"
+                return
             }
             
-            $newCert = Submit-Renewal -MainDomain $Domain -WarningAction SilentlyContinue -WarningVariable renewalWarnings -ErrorAction Stop
+            $newCert = Submit-Renewal -MainDomain $Domain -WarningAction SilentlyContinue -WarningVariable renewalWarnings
             foreach ($warning in $renewalWarnings) {
-                Write-PSFMessage -Message $warning
+                Write-PSFMessage -Level Warning -Message $warning
             }
             if ($newCert) {
                 Write-PSFMessage -Message "Certificate renewal succeeded"
                 Write-PSFMessage -Message "Applying certificate with thumbprint '$($newCert.Thumbprint)' to Milestone XProtect Mobile Server..."
-                $newCert | Set-XProtectCertificate -VmsComponent MobileServer -Force -UserName $ServiceAccountName -RemoveOldCert -ServerConfiguratorPath $ServerConfiguratorPath -ErrorAction Stop
+                $newCert | Set-XProtectCertificate -VmsComponent MobileServer -Force -UserName $ServiceAccountName -RemoveOldCert -ServerConfiguratorPath $ServerConfiguratorPath
+                Write-PSFMessage -Message "New certificate applied successfully."
             }
-            Write-PSFMessage -Message 'Finished'
             Wait-PSFMessage
         } catch {
-            Write-PSFMessage -Message 'Certificate renewal failed.' -ErrorRecord $_
+            Write-PSFMessage -Level Error -Message 'Certificate renewal failed.' -ErrorRecord $_
             Wait-PSFMessage
             throw
         }
     }
     $programData = [system.environment]::GetFolderPath([System.Environment+SpecialFolder]::CommonApplicationData)
     $workingDirectory = (New-Item -Path ([io.path]::Combine($programData, 'Milestone', 'MilestonePSTools')) -ItemType Directory -Force).FullName
-    $renewalScriptPath = Join-Path $workingDirectory 'renew-certificate.ps1'
-    $renewalScript | Set-Content $renewalScriptPath -Force
+    $renewalScriptPath = Join-Path $workingDirectory 'Renew-VmsLECertificate.ps1'
+    ($renewalScript.tostring() -split "`n") -replace '^\s{8}' | Set-Content $renewalScriptPath -Force
 
     $actionParams = @{
         WorkingDirectory = $workingDirectory
         Execute          = (Get-Command powershell.exe).Path
         Argument         = @(
             '-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass',
-            '-File', $renewalScriptPath,
+            '-File', "`"$renewalScriptPath`"",
             '-Domain', $domain,
-            '-ServerConfiguratorPath', "'$ServerConfiguratorPath'",
-            '-ServiceAccountName', "'$serviceAccountName'",
+            '-ServerConfiguratorPath', "`"$configuratorPath`"",
+            '-ServiceAccountName', "`"$serviceAccountName`"",
             '-PAServer', (Get-PAServer).Name
         ) -join ' '
     }
@@ -433,8 +468,8 @@ try {
                 exit
             }
             $registerParams = @{
-                TaskName = 'RenewMobileServerCertificate'
-                TaskPath = '\Milestone\MilestonePSTools'
+                TaskName = 'Renew-VmsLECertificate'
+                TaskPath = '\Milestone'
                 User     = $credential.UserName
                 Password = $credential.GetNetworkCredential().Password
                 Trigger  = New-ScheduledTaskTrigger -Daily -At (Get-Date).Date -RandomDelay (New-TimeSpan -Hours 1)
@@ -471,28 +506,27 @@ try {
     Write-Host -ForegroundColor Green @"
 
 
-Good news! A scheduled task named 'RenewMobileServerCertificate' has been registered in Windows Task
-Scheduler under '\Milestone\MilestonePSTools' and it will run daily, shortly after midnight, under
+Good news! A scheduled task named 'Renew-VmsLECertificate' has been registered in Windows Task
+Scheduler under '\Milestone' and it will run daily, at a random time between 12am and 1am, under
 $([System.Security.Principal.WindowsIdentity]::GetCurrent().Name) with elevated privileges. When
 your Lets Encrypt certificate for $domain is eligible for renewal, the certificate will be renewed,
 applied to the Mobile Server, and the old certificate will be removed from the local machine
 certificate store.
 
-The daily renewal task will write a log to 'C:\ProgramData\Milestone\MilestonePSTools\Logs' on each
-run and retain logs for 7 days. You may check this log file to verify that the task is running
-daily, and completing without errors. If you start seeing renewal reminder emails when there are
-less than 30 days remaining before the certificate expires, these logs are the first place to look.
+The daily renewal task will write event log entries under the log name "Milestone" with a source
+of "Renew-VmsLECertificate". If you start seeing renewal reminder emails when there are less than
+30 days remaining before the certificate expires, the event logs are the first place to look.
 
 Please note that your scheduled task will fail to run or log anything at all if the password for
 this user account is updated without updating the scheduled task in Task Scheduler.
 
-The 'RenewMobileServerCertificate' scheduled task executes the script at '$renewalScriptPath' daily
+The 'Renew-VmsLECertificate' scheduled task executes the script at '$renewalScriptPath' daily
 at midnight, with a random additional delay of up to one hour (to avoid many customers attempting
 renewals at the exact same time).
 
 The Posh-ACME module will only actually allow the renewal to proceed when the current certificate is
-at least 60 days old, so you will see daily messages in the logs about the certificate not being
-ready for renewal and this is normal.
+at least 60 days old unless overridden with "Submit-Renewal -Force", so you will see daily
+messages in the event logs about the certificate not being ready for renewal and this is normal.
 
 You may re-run this script at any time to re-create the scheduled task with updated parameters. Take
 care not to run it too often with the same domain name however, as you will be rate limited by
