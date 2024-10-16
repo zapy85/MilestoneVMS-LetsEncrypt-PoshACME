@@ -2,4 +2,6 @@ Imported from gist [joshooaj](https://gist.github.com/joshooaj/8dc5408b9e2aa077a
 
 As the script uses [PoshACME](https://poshac.me/docs/latest/) which in its turn support a plethora of [DDNS](https://poshac.me/docs/latest/Plugins/) providers i aim to update it to support the other DDNS providers a bit easier.
 
-I have tried to change from Dynu to DuckDNS but it seems PoshACME DuckDNS script is broken, filed a [ticket](https://github.com/rmbolger/Posh-ACME/issues/575) with them.
+Also adding other dependencies for DDNS update as PoshACME does not support auto-updates for the DDNS providers.
+
+Also nice to have everything collected on one site wehere you could file issues, discuss or contribute to it easier.
